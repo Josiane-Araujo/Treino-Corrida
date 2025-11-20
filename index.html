@@ -1,0 +1,234 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Treino Intervalado</title>
+<style>
+  body{font-family:Arial,Helvetica,sans-serif;background:#111;color:#fff;text-align:center;padding:20px}
+  h1{color:#00eaff}
+  .config-box{background:#222;padding:18px;border-radius:10px;margin-bottom:18px}
+  input,button{width:100%;padding:12px;font-size:18px;margin-top:10px;border-radius:8px;border:none}
+  #display{font-size:64px;margin-top:20px}
+  #status{font-size:20px;margin-top:12px;color:#00ff99;min-height:28px}
+  .btn-start{background:#00eaff;color:#000;font-weight:700}
+  .btn-stop{background:#ff4444;color:#fff;font-weight:700}
+  #debug {position:fixed;left:8px;bottom:8px;background:#0009;color:#fff;padding:8px;border-radius:6px;font-size:12px;max-width:48%;}
+</style>
+</head>
+<body>
+
+<h1>Treino Intervalado</h1>
+
+<div class="config-box">
+  <label>⏱ Tempo 1 (minutos)</label>
+  <input id="t1" type="number" step="0.1" placeholder="Ex: 1">
+
+  <label>⏱ Tempo 2 (minutos) (opcional)</label>
+  <input id="t2" type="number" step="0.1" placeholder="Ex: 1">
+
+  <label>🔁 Repetições</label>
+  <input id="reps" type="number" placeholder="Ex: 10">
+
+  <button id="startBtn" class="btn-start" type="button">INICIAR TREINO</button>
+  <button id="stopBtn"  class="btn-stop"  type="button">PARAR</button>
+</div>
+
+<div id="status">Aguardando...</div>
+<div id="display">00:00</div>
+
+<audio id="beep" preload="auto">
+  <source src="https://actions.google.com/sounds/v1/alarms/alarm_clock.ogg" type="audio/ogg">
+</audio>
+
+<div id="debug">debug: pronto</div>
+
+<script>
+/* ============================
+   Compat / Touch fixes
+   ============================ */
+document.addEventListener("touchstart", function(){}, true);
+document.addEventListener("click", function(){}, true);
+
+/* ============================
+   UI elementos
+   ============================ */
+const startBtn = document.getElementById('startBtn');
+const stopBtn  = document.getElementById('stopBtn');
+const debugEl  = document.getElementById('debug');
+const statusEl = document.getElementById('status');
+const displayEl= document.getElementById('display');
+const beepEl   = document.getElementById('beep');
+
+/* ============================
+   Função para logar no debug
+   ============================ */
+function dbg(msg){
+  console.log(msg);
+  debugEl.innerText = 'debug: ' + msg;
+}
+
+/* ============================
+   Desbloqueio de áudio Safari iOS
+   ============================ */
+function unlockAudio(){
+  return new Promise(resolve => {
+    const p = beepEl.play();
+    if (p !== undefined){
+      p.then(()=>{ beepEl.pause(); beepEl.currentTime=0; dbg('áudio desbloqueado'); resolve(); })
+       .catch(()=>{ dbg('áudio: play bloqueado (catch)'); resolve(); });
+    } else {
+      dbg('áudio: play não disponível'); resolve();
+    }
+  });
+}
+
+/* ============================
+   Variáveis do treino
+   ============================ */
+let intervalId = null;
+let currentTime = 0;
+let phase = 1;
+let currentRep = 1;
+let t1 = 0, t2 = 0, reps = 0;
+let usingT2 = false;
+
+/* ============================
+   Funções utilitárias
+   ============================ */
+function vibrate(){
+  if (navigator.vibrate) navigator.vibrate([250,120,250]);
+}
+
+function playBeep(){
+  try { beepEl.currentTime = 0; beepEl.play(); } catch(e){ dbg('playBeep erro: '+e); }
+}
+
+function updateDisplay(){
+  const m = String(Math.floor(currentTime/60)).padStart(2,'0');
+  const s = String(currentTime % 60).padStart(2,'0');
+  displayEl.innerText = `${m}:${s}`;
+}
+
+/* ============================
+   Stop
+   ============================ */
+function stopTraining(){
+  clearInterval(intervalId);
+  intervalId = null;
+  statusEl.innerText = 'Treino parado ❗';
+  dbg('stop pressionado');
+}
+
+/* ============================
+   Start (função pública)
+   ============================ */
+async function startTrainingInternal(){
+  dbg('tentando iniciar');
+  await unlockAudio(); // garante desbloqueio em iOS
+
+  const t1m = parseFloat(document.getElementById('t1').value);
+  const t2m = parseFloat(document.getElementById('t2').value);
+  reps = parseInt(document.getElementById('reps').value);
+
+  if (!t1m || !reps || reps <= 0){
+    alert('Preencha Tempo 1 (minutos) e Repetições (>=1).');
+    dbg('validação falhou');
+    return;
+  }
+
+  t1 = Math.round(t1m * 60);
+  t2 = Math.round((isNaN(t2m) ? 0 : t2m) * 60);
+  usingT2 = !isNaN(t2m) && t2m > 0;
+
+  currentRep = 1;
+  phase = 1;
+  currentTime = t1;
+
+  // feedback imediato para garantir que o toque foi registrado
+  playBeep(); vibrate();
+  statusEl.innerText = `Rep ${currentRep} – Tempo 1`;
+  dbg('iniciado (feedback OK)');
+
+  runTimer();
+}
+
+/* ============================
+   Timer core
+   ============================ */
+function runTimer(){
+  if (intervalId) clearInterval(intervalId);
+  intervalId = setInterval(() => {
+    updateDisplay();
+
+    if (currentTime <= 0){
+      playBeep(); vibrate();
+
+      if (phase === 1 && usingT2){
+        phase = 2;
+        currentTime = t2;
+        statusEl.innerText = `Rep ${currentRep} – Tempo 2`;
+        return;
+      }
+
+      if (phase === 2 || !usingT2){
+        currentRep++;
+        if (currentRep > reps){
+          clearInterval(intervalId); intervalId = null;
+          statusEl.innerText = 'Treino Finalizado ✔️';
+          displayEl.innerText = '00:00';
+          playBeep(); vibrate();
+          dbg('treino finalizado');
+          return;
+        }
+        phase = 1;
+        currentTime = t1;
+        statusEl.innerText = `Rep ${currentRep} – Tempo 1`;
+        return;
+      }
+    }
+
+    currentTime--;
+  }, 1000);
+}
+
+/* ============================
+   Liga os eventos: click + touchend
+   ============================ */
+
+// Bind tradicional (fallback)
+startBtn.onclick = function(e){
+  // apenas pra garantir que qualquer chamada por onclick execute
+  try { startTrainingInternal(); } catch(err){ alert('Erro start.onclick: '+err); dbg('erro start.onclick '+err); }
+};
+
+// Força também por listeners (iOS touch)
+startBtn.addEventListener('touchend', function(e){
+  e.preventDefault(); // evita que o sistema faça algo diferente
+  try { startTrainingInternal(); } catch(err){ alert('Erro start.touchend: '+err); dbg('erro start.touchend '+err); }
+}, {passive:false});
+
+// Também adiciona listener de click redundante
+startBtn.addEventListener('click', function(e){
+  try { startTrainingInternal(); } catch(err){ alert('Erro start.click: '+err); dbg('erro start.click '+err); }
+});
+
+// Stop button listeners
+stopBtn.addEventListener('click', stopTraining);
+stopBtn.addEventListener('touchend', function(e){ e.preventDefault(); stopTraining(); }, {passive:false});
+
+/* ============================
+   Inicial: garantir que toques sejam registrados
+   ============================ */
+document.addEventListener('touchstart', function onFirstTouch(){
+  dbg('primeiro toque detectado');
+  // tentamos desbloquear audio logo no primeiro toque global
+  unlockAudio();
+  document.removeEventListener('touchstart', onFirstTouch);
+}, {passive:true});
+
+dbg('script carregado');
+</script>
+
+</body>
+</html>
